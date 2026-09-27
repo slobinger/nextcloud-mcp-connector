@@ -122,10 +122,14 @@ class FlowStart:
     """A sign in that Nextcloud has opened: where the user goes, and how we ask about it."""
 
     poll_token: str
+    poll_url: str
     login_url: str
 
     def __repr__(self) -> str:
-        return f"FlowStart(login_url={self.login_url!r}, poll_token='***')"
+        return (
+            f"FlowStart(login_url={self.login_url!r}, "
+            f"poll_url={self.poll_url!r}, poll_token='***')"
+        )
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -205,9 +209,17 @@ async def start_flow(client_name: str, *, target: NextcloudTarget) -> FlowStart 
     payload = _payload(response, url)
     poll = payload.get("poll") if isinstance(payload, dict) else None
     token = _text(poll.get("token") if isinstance(poll, dict) else None)
+    poll_url = _text(poll.get("endpoint") if isinstance(poll, dict) else None)
     login = _text(payload.get("login") if isinstance(payload, dict) else None)
-    if token is None or login is None:
+    if token is None or poll_url is None or login is None:
         logger.error("the login flow start at %s answered a body without a usable flow", url)
+        return None
+
+    if not _same_origin(poll_url, target.base_url):
+        logger.error(
+            "the login flow start at %s answered a poll endpoint on a foreign origin",
+            url,
+        )
         return None
 
     if urlsplit(login).scheme not in _LOGIN_SCHEMES:
@@ -216,10 +228,15 @@ async def start_flow(client_name: str, *, target: NextcloudTarget) -> FlowStart 
         logger.error("the login flow start at %s answered a login link with a foreign scheme", url)
         return None
 
-    return FlowStart(poll_token=token, login_url=login)
+    return FlowStart(poll_token=token, poll_url=poll_url, login_url=login)
 
 
-async def poll_once(poll_token: str, *, target: NextcloudTarget) -> PollResult:
+async def poll_once(
+    poll_token: str,
+    poll_url: str,
+    *,
+    target: NextcloudTarget,
+) -> PollResult:
     """Ask Nextcloud once whether the sign in is finished. Exactly one request, ever.
 
     One request per call is the whole throttling of the waiting page: it refreshes every few
@@ -230,7 +247,7 @@ async def poll_once(poll_token: str, *, target: NextcloudTarget) -> PollResult:
     the difference cannot come from this answer. It comes from the deadline the caller keeps
     in its own flow record.
     """
-    url = f"{target.base_url}{POLL_PATH}"
+    url = poll_url
     client = shared_client()
 
     try:
@@ -376,3 +393,19 @@ def _text(value: object) -> str | None:
     to build a flow or a credential out of it, instead of carrying the surprise further.
     """
     return value if isinstance(value, str) and value else None
+
+def _origin(url: str) -> tuple[str, str | None, int | None]:
+    parsed = urlsplit(url)
+
+    port = parsed.port
+    if port is None:
+        if parsed.scheme == "https":
+            port = 443
+        elif parsed.scheme == "http":
+            port = 80
+
+    return parsed.scheme, parsed.hostname, port
+
+
+def _same_origin(left: str, right: str) -> bool:
+    return _origin(left) == _origin(right)
