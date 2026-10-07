@@ -10,7 +10,7 @@ ExApp package, and follows the same four rules (03-PATTERNS.md):
 
 1. The target is the :class:`~mcp_connector.nextcloud.target.NextcloudTarget` the
    deployment injected when it built the application. The poll endpoint comes from the
-   start answer and must share that target's origin.
+   start answer, with a foreign origin replaced by the configured origin.
 2. The client comes from :func:`mcp_connector.nextcloud.http.shared_client`, which already
    refuses redirects and carries the timeouts of this project.
 3. One attempt per call and no retry (D-37). A failure is a return value, so a caller can
@@ -26,13 +26,14 @@ wrong exactly once (pitfall 7 of 03-RESEARCH.md):
   is not visible from outside, which is why the deadline of a sign in is ours
   (:data:`mcp_connector.oauth.store.FLOW_TTL`) and never read out of an answer.
 * The start answer carries an absolute poll address built from ``overwrite.cli.url``. It is
-  a URL used unchanged for polling, provided its origin matches the injected target.
+  used unchanged when its origin matches the injected target. For split-horizon deployments,
+  its path and query are transferred to the configured origin without guessing a poll path.
 """
 
 import logging
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -213,11 +214,9 @@ async def start_flow(client_name: str, *, target: NextcloudTarget) -> FlowStart 
         logger.error("the login flow start at %s answered a body without a usable flow", url)
         return None
 
-    if not _same_origin(poll_url, target.base_url):
-        logger.error(
-            "the login flow start at %s answered a poll endpoint on a foreign origin",
-            url,
-        )
+    poll_url = _poll_url(poll_url, target.base_url)
+    if poll_url is None:
+        logger.error("the login flow start at %s answered an invalid poll endpoint", url)
         return None
 
     if urlsplit(login).scheme not in _LOGIN_SCHEMES:
@@ -407,9 +406,25 @@ def _origin(url: str) -> tuple[str, str | None, int | None]:
     return parsed.scheme, parsed.hostname, port
 
 
-def _same_origin(left: str, right: str) -> bool:
-    """Compare origins, refusing malformed URLs instead of letting parsing errors escape."""
+def _poll_url(endpoint: str, base_url: str) -> str | None:
+    """Keep the announced path and query on the configured origin, or refuse invalid URLs.
+
+    Nextcloud may announce its public overwrite URL while an ExApp reaches it through an
+    internal service name. Replace only the origin in that case; a base subpath must not
+    be prepended to the already absolute endpoint path.
+    """
     try:
-        return _origin(left) == _origin(right)
+        announced = urlsplit(endpoint)
+        if announced.scheme not in _LOGIN_SCHEMES or not announced.hostname:
+            return None
+        # Accessing the effective ports also validates them before either branch.
+        if _origin(endpoint) == _origin(base_url):
+            return endpoint
+        configured = urlsplit(base_url)
     except ValueError:
-        return False
+        return None
+
+    logger.info(
+        "the login flow poll endpoint uses the configured origin instead of its announced origin"
+    )
+    return urlunsplit((configured.scheme, configured.netloc, announced.path, announced.query, ""))

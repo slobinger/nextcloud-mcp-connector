@@ -32,7 +32,7 @@ INIT_URL = f"{BASE_URL}{loginflow.INIT_PATH}"
 POLL_URL = f"{BASE_URL}/custom/login/poll"
 APP_PASSWORD_URL = f"{BASE_URL}{loginflow.APP_PASSWORD_PATH}"
 
-#: A foreign endpoint must be refused before its poll token could be sent there.
+#: A public endpoint may advertise a different origin from the internal Nextcloud target.
 FOREIGN_POLL_ENDPOINT = "https://public.example.org/login/v2/poll"
 
 LOGIN_URL = "https://cloud.example.com/index.php/login/v2/flow/abc123"
@@ -607,17 +607,16 @@ async def test_a_display_name_does_not_rescue_an_unusable_account_id() -> None:
 @pytest.mark.parametrize(
     "endpoint",
     [
-        FOREIGN_POLL_ENDPOINT,
-        "http://other.test/poll",
-        "https://nc.test/poll",
-        "http://nc.test:8080/poll",
         "http://nc.test:not-a-port/poll",
         "http://nc.test:65536/poll",
         "http://[broken/poll",
         "/relative/poll",
+        "//nc.test/poll",
+        "https:///poll",
+        "ftp://nc.test/poll",
     ],
 )
-async def test_a_foreign_or_malformed_poll_endpoint_is_refused(endpoint: str) -> None:
+async def test_a_malformed_poll_endpoint_is_refused(endpoint: str) -> None:
     """An untrusted endpoint cannot turn the origin guard into a crash or a token leak."""
     init = respx.post(INIT_URL).mock(return_value=httpx.Response(200, json=start_body(endpoint)))
 
@@ -667,4 +666,67 @@ async def test_default_ports_share_an_origin_and_the_endpoint_is_used_unchanged(
     result = await loginflow.poll_once(started.poll_token, started.poll_url, target=target)
     assert result.outcome == loginflow.POLL_PENDING
     assert poll.call_count == 1
+    assert poll.calls[0].request.content == f"token={POLL_TOKEN}".encode()
+
+
+@respx.mock
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("base", "endpoint", "expected"),
+    [
+        ("http://nc.test", FOREIGN_POLL_ENDPOINT, "http://nc.test/login/v2/poll"),
+        ("http://nc.test", "http://other.test/poll", "http://nc.test/poll"),
+        ("http://nc.test", "https://nc.test/poll", "http://nc.test/poll"),
+        ("http://nc.test", "http://nc.test:8080/poll", "http://nc.test/poll"),
+        (
+            "http://caddy",
+            "https://cloud.example/nextcloud/index.php/login/v2/poll?flow=abc",
+            "http://caddy/nextcloud/index.php/login/v2/poll?flow=abc",
+        ),
+        (
+            "https://internal.test:8443/base",
+            "https://public.test/nc/index.php/login/v2/poll?a=%2F&b=1&b=2#ignored",
+            "https://internal.test:8443/nc/index.php/login/v2/poll?a=%2F&b=1&b=2",
+        ),
+        (
+            "http://caddy",
+            "https://public.test//other.test/index.php/login/v2/poll",
+            "http://caddy//other.test/index.php/login/v2/poll",
+        ),
+    ],
+)
+async def test_a_foreign_poll_origin_is_replaced_without_changing_path_or_query(
+    base: str, endpoint: str, expected: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Split-horizon polling reaches only the configured origin, including double-slash paths."""
+    target = NextcloudTarget.from_url(base)
+    init = respx.post(f"{target.base_url}{loginflow.INIT_PATH}").mock(
+        return_value=httpx.Response(200, json=start_body(endpoint))
+    )
+    # Match the complete URL: RESPX's path matcher normalizes a leading double slash.
+    poll = respx.post(url__regex=f"^{re.escape(expected)}$").mock(return_value=httpx.Response(404))
+
+    with caplog.at_level(logging.INFO, logger="mcp_connector.oauth.loginflow"):
+        started = await loginflow.start_flow("Claude", target=target)
+
+    assert started is not None
+    assert started.poll_url == expected
+    assert started.login_url == LOGIN_URL
+    messages = [
+        record for record in caplog.records if record.name == "mcp_connector.oauth.loginflow"
+    ]
+    assert len(messages) == 1
+    assert messages[0].levelno == logging.INFO
+    assert "configured origin" in messages[0].getMessage()
+    assert endpoint not in messages[0].getMessage()
+    assert POLL_TOKEN not in messages[0].getMessage()
+    assert "flow=abc" not in messages[0].getMessage()
+    assert "a=%2F" not in messages[0].getMessage()
+
+    result = await loginflow.poll_once(started.poll_token, started.poll_url, target=target)
+
+    assert result.outcome == loginflow.POLL_PENDING
+    assert init.call_count == poll.call_count == 1
+    assert len(respx.calls) == 2
+    assert poll.calls[0].request.url == httpx.URL(expected)
     assert poll.calls[0].request.content == f"token={POLL_TOKEN}".encode()

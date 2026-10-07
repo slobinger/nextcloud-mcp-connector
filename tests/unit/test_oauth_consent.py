@@ -2771,3 +2771,54 @@ def test_an_unresolved_account_stores_nothing_and_hands_the_password_back(
     assert revoke.call_count == 1
     assert asyncio.run(store.load_authorization(flow_id)) is None
     assert asyncio.run(store.load_flow(flow_id)) is None, "the spent poll leaves no waiting page"
+
+
+def test_split_horizon_authorization_stores_and_polls_the_internal_origin(
+    store: OAuthStore,
+) -> None:
+    """A public overwrite URL keeps its path while the whole OAuth flow uses the internal host."""
+    target = NextcloudTarget.from_url("http://caddy")
+    advertised = "https://cloud.example/nextcloud/index.php/login/v2/poll?flow=abc"
+    expected = "http://caddy/nextcloud/index.php/login/v2/poll?flow=abc"
+
+    async def provide() -> OAuthStore:
+        return store
+
+    provider = provider_module.NextcloudOAuthProvider(
+        nextcloud=target,
+        env=ENV,
+        policy=registry.client_policy(ENV),
+        store_provider=provide,
+    )
+    register(provider)
+    client = TestClient(
+        Starlette(
+            routes=[
+                *provider_module.auth_routes(ENV, provider=provider),
+                *consent.consent_routes(
+                    ENV,
+                    provider=provider,
+                    browser_identity=AppApiBrowserIdentitySource(ENV),
+                    nextcloud=target,
+                ),
+            ]
+        )
+    )
+
+    with respx.mock:
+        init = respx.post(f"{target.base_url}{loginflow.INIT_PATH}").mock(
+            return_value=httpx.Response(200, json=start_body(advertised))
+        )
+        response = start(client)
+        assert response.status_code == 302
+        flow_id = flow_of(response)
+        row = asyncio.run(store.load_flow(flow_id))
+        assert row is not None
+        assert row.poll_url == expected
+        poll = respx.post(expected).mock(return_value=httpx.Response(404))
+        waiting = client.get(consent_url(flow_id, step=ui_consent.STEP_WAIT))
+
+        assert waiting.status_code == 200
+        assert init.call_count == poll.call_count == 1
+        assert len(respx.calls) == 2
+        assert poll.calls[0].request.content == f"token={POLL_TOKEN}".encode()
