@@ -29,7 +29,7 @@ import httpx
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 
-from .. import __version__, deps
+from .. import __version__, config, deps
 from ..audit import OUTCOME_FAILED, OUTCOME_OK, OUTCOME_REJECTED, record
 from ..errors import (
     REASON_TIMEOUT,
@@ -38,7 +38,7 @@ from ..errors import (
     ToolError,
 )
 
-__all__ = ["CREATE_ONLY", "READ_ONLY", "compact", "graceful", "mcp"]
+__all__ = ["CREATE_ONLY", "READ_ONLY", "bundle_names", "compact", "graceful", "mcp"]
 
 # (None, None) unless a static bearer is configured. The SDK rejects one without the
 # other with a ValueError in the constructor, so they are built as a pair.
@@ -139,16 +139,86 @@ def graceful[T](fn: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
     return wrapper
 
 
+def bundle_names() -> list[str]:
+    """Return the sorted tool bundle names, the suffixes of the ``reg_*`` modules.
+
+    These names are public API: ``NC_MCP_DISABLED_TOOLS`` takes them, and a contract test
+    freezes them together with the tools behind each one.
+    """
+    return sorted(
+        module.name.removeprefix("reg_")
+        for module in pkgutil.iter_modules(__path__)
+        if module.name.startswith("reg_")
+    )
+
+
+def _strip_schema_titles(schema: dict[str, Any]) -> None:
+    """Remove pydantic's derived ``title`` keys from one JSON schema, in place.
+
+    Every generated ``title`` is a spelling variant of the parameter name next to it
+    ("upload_id" carries ``"title": "Upload Id"``), so a model learns nothing from it while
+    every client pays for it in every session: measured on 2026-10-06 the keys cost 2516
+    bytes of the 17763-byte surface (see the budget history in
+    ``scripts/check_tool_budget.py``, which named this cut long before it was taken).
+
+    The walk recurses only through schema positions. The keys of a ``properties`` object
+    are parameter names, not keywords, so a *parameter* called ``title`` (deck_create_card,
+    notes_create) keeps its name and loses only the derived annotation inside its own
+    sub-schema.
+    """
+    if isinstance(schema.get("title"), str):
+        del schema["title"]
+    for key in ("properties", "$defs"):
+        named = schema.get(key)
+        if isinstance(named, dict):
+            for sub in named.values():
+                if isinstance(sub, dict):
+                    _strip_schema_titles(sub)
+    for key in ("items", "additionalProperties", "not"):
+        sub = schema.get(key)
+        if isinstance(sub, dict):
+            _strip_schema_titles(sub)
+    for key in ("anyOf", "oneOf", "allOf", "prefixItems"):
+        subs = schema.get(key)
+        if isinstance(subs, list):
+            for sub in subs:
+                if isinstance(sub, dict):
+                    _strip_schema_titles(sub)
+
+
+def _diet_tool_schemas() -> None:
+    """Strip the derived titles from every registered tool, input and output schema alike.
+
+    One pass after registration instead of a hook inside every ``@mcp.tool`` call: the
+    surface is only complete once ``_load_registrations`` returns, and a single place is
+    one place for the contract test to hold accountable. ``_tool_manager`` is SDK-private,
+    which the test accepts as the cost of not reimplementing schema generation; if an SDK
+    upgrade renames it, this line fails loudly at import, not silently at list time.
+    """
+    for tool in mcp._tool_manager.list_tools():
+        _strip_schema_titles(tool.parameters)
+        if tool.output_schema is not None:
+            _strip_schema_titles(tool.output_schema)
+
+
 def _load_registrations() -> None:
     """Import every ``reg_*`` module so its tools register themselves.
 
     Each tool bundle owns its own registration file. That way plans that are written in
     parallel never have to change one shared file, and a new bundle is a new file plus
     nothing else.
+
+    This is also the switch point of ``NC_MCP_DISABLED_TOOLS`` (issue #15): a bundle named
+    there is not imported, so its tools are not registered. Only the registration is
+    switched, the logic under ``tools/`` stays importable, because search, fetch and
+    prepare_context build on it.
     """
-    for module in pkgutil.iter_modules(__path__):
-        if module.name.startswith("reg_"):
-            importlib.import_module(f"{__name__}.{module.name}")
+    names = bundle_names()
+    disabled = config.disabled_bundles(names)
+    for name in names:
+        if name not in disabled:
+            importlib.import_module(f"{__name__}.reg_{name}")
 
 
 _load_registrations()
+_diet_tool_schemas()

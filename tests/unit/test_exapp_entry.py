@@ -41,7 +41,7 @@ from mcp_connector.audit import record as audit_record
 from mcp_connector.audit import refusals as audit_refusals
 from mcp_connector.audit import store as audit_store_module
 from mcp_connector.errors import IssuerRefused, ToolError
-from mcp_connector.exapp import config_values, exchange_check
+from mcp_connector.exapp import config_values, exchange_check, exclusion_check
 from mcp_connector.exapp.middleware import RequireAppApi
 from mcp_connector.exapp.ui import connections as ui_connections
 from mcp_connector.exapp.ui import strings
@@ -308,6 +308,37 @@ def test_the_exapp_app_still_serves_mcp() -> None:
     assert "/mcp" in paths(entry_exapp.build_exapp_app(EXAPP_ENV))
 
 
+def test_the_start_names_the_directory_the_file_tools_are_bound_to(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Issue #12: the deploy daemon drops an undeclared variable without a word, so the log
+    of the start is where an administrator sees whether the sandbox took effect."""
+    with caplog.at_level(logging.INFO, logger="mcp_connector.entry_exapp"):
+        entry_exapp.build_exapp_app({**EXAPP_ENV, config.ENV_FILES_ROOT: "/Documents/AI/"})
+
+    assert "the file tools are bound to /Documents/AI (NC_MCP_FILES_ROOT)" in caplog.messages
+
+
+def test_the_start_says_so_when_no_directory_binds_the_file_tools(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger="mcp_connector.entry_exapp"):
+        entry_exapp.build_exapp_app(EXAPP_ENV)
+
+    assert (
+        "the file tools see the whole files area (NC_MCP_FILES_ROOT is not set)" in caplog.messages
+    )
+
+
+def test_an_invalid_files_root_stops_the_build(caplog: pytest.LogCaptureFixture) -> None:
+    """Fail closed: a sandbox that cannot be read never falls back to the whole files area."""
+    with pytest.raises(ToolError) as excinfo:
+        entry_exapp.build_exapp_app({**EXAPP_ENV, config.ENV_FILES_ROOT: "/Documents/../.."})
+
+    assert config.ENV_FILES_ROOT in excinfo.value.message
+    assert not any("the file tools" in message for message in caplog.messages)
+
+
 def test_the_exapp_app_carries_the_dry_run_route_of_the_occ_command() -> None:
     """EXCH-06: a registered command whose handler is missing answers 404 on the one day
     somebody needs it, so the route is held against the path constant here as well."""
@@ -334,6 +365,38 @@ def test_the_dry_run_route_answers_200_through_the_built_application() -> None:
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     assert response.json()["outcome"] == exchange_check.OUTCOME_NOT_CONFIGURED
+
+
+def test_the_exapp_app_carries_the_route_of_the_exclusion_check() -> None:
+    """OPS-01: the fifth registered command needs its handler in the built application."""
+    assert exclusion_check.EXCLUSION_CHECK_PATH in paths(entry_exapp.build_exapp_app(EXAPP_ENV))
+
+
+def test_the_exclusion_check_route_answers_200_through_the_built_application() -> None:
+    """Reached the way AppAPI reaches it. An unacceptable uid ends before any Nextcloud call,
+    so the route is proven without a network, and the answer is still a 200 with a body."""
+    with TestClient(entry_exapp.build_exapp_app(SERVED_ENV)) as client:
+        response = client.post(
+            exclusion_check.EXCLUSION_CHECK_PATH,
+            json={"occ": {"arguments": None, "options": {"json": True, "admin": "a" * 65}}},
+            headers=appapi_headers(),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["checked"] is False
+    assert response.json()["passed"] is False
+
+
+def test_the_exclusion_check_route_is_refused_on_the_php_proxy_path() -> None:
+    """T-29-12: the proxy attaches valid AppAPI headers itself, so the header decides."""
+    with TestClient(entry_exapp.build_exapp_app(SERVED_ENV)) as client:
+        response = client.post(
+            exclusion_check.EXCLUSION_CHECK_PATH,
+            json={"occ": {"arguments": None, "options": {}}},
+            headers={**appapi_headers(), "x-origin-ip": "203.0.113.7"},
+        )
+
+    assert response.status_code == 404
 
 
 def test_the_dry_run_route_is_refused_on_the_php_proxy_path() -> None:

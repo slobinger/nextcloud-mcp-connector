@@ -15,7 +15,7 @@ You bring the model, and no content leaves your server.
 
 ## What it does
 
-- 22 tools across nine app families: files, calendar, notes, Deck, contacts, Tables, Talk,
+- 23 tools across nine app families: files, calendar, notes, Deck, contacts, Tables, Talk,
   Mail and cloud wide search
 - OAuth 2.1 to the MCP authorization specification: dynamic client registration, PKCE S256,
   audience bound tokens, refresh rotation with reuse detection and immediate revocation.
@@ -58,6 +58,7 @@ the live registry and fails if a name or a level disagrees with it.
 | `files_list` | read | The direct children of a folder, with size and modification time |
 | `files_read` | read | The content of one file |
 | `files_download` | read | Any-size file as bounded embedded-resource chunks |
+| `files_read_as_markdown` | read | A DOCX, XLSX, PPTX or PDF file converted to Markdown, in slices |
 | `files_upload` | create-only | A new text file or any-size binary upload in base64 chunks; an existing path is refused, never overwritten |
 | `calendar_list_events` | read | Events in an explicit time range, with an explicit time zone |
 | `calendar_create_event` | create-only | A new event; existing events are never changed |
@@ -89,6 +90,45 @@ missing app is answered in one sentence, never with an empty result.
 ```json
 {"query":"budget","count":2,"results":[{"id":"file:4711","title":"Budget 2026.md","url":"https://cloud.example.org/index.php/f/4711","provider":"files","kind":"file"},{"id":"url:https://cloud.example.org/index.php/call/abc123","title":"Khaled","url":"https://cloud.example.org/index.php/call/abc123","provider":"talk-conversations","kind":"url","resolvable":false}]}
 ```
+
+## Switching tool bundles off
+
+- Variable: `NC_MCP_DISABLED_TOOLS`, comma separated bundle names, read at start.
+- Where to set it: as a deploy environment variable of the ExApp, either in the deploy
+  options of the install/update dialog, or on the command line:
+  `occ app_api:app:register mcp_connector --env "NC_MCP_DISABLED_TOOLS=mail,calendar"`
+  (unregister first on an existing installation; user connections survive, the container
+  is recreated). The start log names the bundles that are off.
+- Default: unset, every bundle is on.
+- Example: `export NC_MCP_DISABLED_TOOLS=mail,calendar`, useful when a second MCP server
+  already offers mail and calendar and a smaller model confuses the two.
+- Bundles and their tools:
+  - `calendar`: `calendar_list_events`, `calendar_create_event`
+  - `chatgpt`: `search`, `fetch`
+  - `contacts`: `contacts_search`
+  - `context`: `prepare_context`
+  - `deck`: `deck_browse`, `deck_create_card`
+  - `files`: `files_search`, `files_list`, `files_read`, `files_download`,
+    `files_read_as_markdown`, `files_upload`
+  - `mail`: `mail_browse`
+  - `notes`: `notes_search`, `notes_read`, `notes_create`
+  - `search`: `unified_search`
+  - `tables`: `tables_browse`, `tables_create_row`
+  - `talk`: `talk_browse`, `talk_send`
+- An unknown name, or every name at once, stops the server at start with a message that
+  lists the valid names.
+- Not an access control: `search`, `fetch` and `prepare_context` still reach the content
+  of a switched off bundle. Use Nextcloud permissions, the `kein-ki` tag or
+  `NC_MCP_FILES_ROOT` to keep content away from the assistant.
+- ChatGPT connectors expect the `chatgpt` bundle (`search`, `fetch`).
+- The ExApp declares the variable and logs at start which bundles are switched off.
+
+## Excluding folders: the kein-ki tag
+
+Tag a folder or file with the collaborative tag `kein-ki` and the assistant no longer sees it or anything below it.
+Check the setup with `php occ mcp_connector:exclusion:check --admin=<uid>`.
+Most important limit: a tag above the root of a share does not protect the shared folder for the recipient, so tag the folder you share.
+Setup, all limits and the findings they rest on: [docs/exclusion.md](docs/exclusion.md).
 
 ## Security
 

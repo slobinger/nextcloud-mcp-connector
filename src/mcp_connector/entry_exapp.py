@@ -37,6 +37,7 @@ from .exapp.audit_read import audit_read_routes
 from .exapp.audit_verify import audit_verify_routes
 from .exapp.browser_identity import AppApiBrowserIdentitySource
 from .exapp.exchange_check import exchange_check_routes
+from .exapp.exclusion_check import exclusion_check_routes
 from .exapp.lifecycle import lifecycle_routes
 from .exapp.middleware import RequireAppApi
 from .exapp.purge import purge_routes
@@ -52,7 +53,7 @@ from .oauth.provider import NextcloudOAuthProvider, auth_routes
 from .oauth.registry import client_policy
 from .oauth.store import store_opener
 from .oauth.verifier import StoreTokenVerifier
-from .server import mcp
+from .server import bundle_names, mcp
 
 __all__ = ["build_exapp_app", "main"]
 
@@ -90,7 +91,24 @@ def build_exapp_app(env: Mapping[str, str] | None = None) -> Starlette:
     this mode the wrapper is not optional, so a missing wrap is an error and not a
     warning: it would leave the whole JSON-RPC preamble unauthenticated (CR-01).
     """
-    config.files_root(env)
+    # One line either way, because the deploy daemon drops an undeclared variable without a
+    # word (issue #12): the log is where an administrator sees which binding took effect.
+    root = config.files_root(env)
+    if root == "/":
+        logger.info(
+            "the file tools see the whole files area (%s is not set)", config.ENV_FILES_ROOT
+        )
+    else:
+        logger.info("the file tools are bound to %s (%s)", root, config.ENV_FILES_ROOT)
+    disabled = config.disabled_bundles(bundle_names(), env)
+    if disabled:
+        logger.info(
+            "the tool bundles %s are switched off (%s)",
+            ", ".join(sorted(disabled)),
+            config.ENV_DISABLED_TOOLS,
+        )
+    else:
+        logger.info("all tool bundles are on (%s is not set)", config.ENV_DISABLED_TOOLS)
     security = TransportSecuritySettings(
         allowed_hosts=config.allowed_hosts(env),
         enable_dns_rebinding_protection=config.dns_rebinding_protection(env),
@@ -371,6 +389,7 @@ def build_exapp_app(env: Mapping[str, str] | None = None) -> Starlette:
         *audit_verify_routes(env, store_provider=audit_store),
         *audit_read_routes(env, store_provider=audit_store),
         *exchange_check_routes(env, config=exchange_config),
+        *exclusion_check_routes(env),
     ):
         app.router.routes.append(route)
     return app
