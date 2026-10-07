@@ -9,8 +9,8 @@ The module is built like :mod:`mcp_connector.exapp.status`, the one outgoing cal
 ExApp package, and follows the same four rules (03-PATTERNS.md):
 
 1. The target is the :class:`~mcp_connector.nextcloud.target.NextcloudTarget` the
-   deployment injected when it built the application, never a value from an answer and
-   never a second read of the environment.
+   deployment injected when it built the application. The poll endpoint comes from the
+   start answer and must share that target's origin.
 2. The client comes from :func:`mcp_connector.nextcloud.http.shared_client`, which already
    refuses redirects and carries the timeouts of this project.
 3. One attempt per call and no retry (D-37). A failure is a return value, so a caller can
@@ -26,8 +26,7 @@ wrong exactly once (pitfall 7 of 03-RESEARCH.md):
   is not visible from outside, which is why the deadline of a sign in is ours
   (:data:`mcp_connector.oauth.store.FLOW_TTL`) and never read out of an answer.
 * The start answer carries an absolute poll address built from ``overwrite.cli.url``. It is
-  a public URL that this container may not be able to resolve at all, so it is deliberately
-  ignored: the poll below goes to the configured base URL with a fixed path.
+  a URL used unchanged for polling, provided its origin matches the injected target.
 """
 
 import logging
@@ -68,7 +67,7 @@ __all__ = [
 #: instance without pretty URLs as well.
 INIT_PATH = "/index.php/login/v2"
 
-#: The one poll address this project uses. Fixed on purpose, see the module docstring.
+#: The conventional Nextcloud poll path; the actual endpoint comes from the start answer.
 POLL_PATH = "/login/v2/poll"
 
 #: The OCS route that names the account a request authenticates as. Its ``id`` is the
@@ -127,8 +126,7 @@ class FlowStart:
 
     def __repr__(self) -> str:
         return (
-            f"FlowStart(login_url={self.login_url!r}, "
-            f"poll_url={self.poll_url!r}, poll_token='***')"
+            f"FlowStart(login_url={self.login_url!r}, poll_url={self.poll_url!r}, poll_token='***')"
         )
 
 
@@ -394,7 +392,9 @@ def _text(value: object) -> str | None:
     """
     return value if isinstance(value, str) and value else None
 
+
 def _origin(url: str) -> tuple[str, str | None, int | None]:
+    """Return scheme, hostname and effective port, raising ValueError for malformed URLs."""
     parsed = urlsplit(url)
 
     port = parsed.port
@@ -408,4 +408,8 @@ def _origin(url: str) -> tuple[str, str | None, int | None]:
 
 
 def _same_origin(left: str, right: str) -> bool:
-    return _origin(left) == _origin(right)
+    """Compare origins, refusing malformed URLs instead of letting parsing errors escape."""
+    try:
+        return _origin(left) == _origin(right)
+    except ValueError:
+        return False
