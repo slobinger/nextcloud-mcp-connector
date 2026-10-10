@@ -9,12 +9,17 @@ on:
     branches: [main]
   pull_request:
 
+# Nothing in CI writes to the repository, so nothing in CI may hold a token
+# that could: the default token of every job is read-only.
+permissions:
+  contents: read
+
 jobs:
   unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
       - name: Install locked environment
@@ -33,7 +38,7 @@ jobs:
       - name: Dead code check
         run: uv run vulture src scripts vulture_whitelist.py
       - name: Unit and contract tests
-        run: uv run pytest tests/unit tests/contract
+        run: uv run pytest tests/unit tests/contract --cov=src/mcp_connector --cov-report=term
       # Armed at the measured size plus 15 percent, plus a per tool ceiling (see the
       # comment in the script), so a nineteenth tool or a single description that grows
       # into a paragraph fails here.
@@ -48,12 +53,12 @@ jobs:
   image:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # QEMU is what makes the arm64 half of the matrix runnable on an amd64 runner: the
       # Dockerfile installs packages and unpacks frpc for the target architecture, so
       # those layers execute emulated instead of being cross compiled.
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: ExApp image build (no push)
         # Both architectures are built and none of them is published: registry publishing
         # belongs to phase 5 (D-25), so there is no login and no registry step in this
@@ -64,8 +69,8 @@ jobs:
   exapp:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
       - name: Generate a fresh HaRP shared key
@@ -162,8 +167,8 @@ jobs:
     env:
       NC_EXAPP_NEXTCLOUD_IMAGE: nextcloud:35.0.1-apache
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
       - name: Generate a fresh HaRP shared key
@@ -238,8 +243,8 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
           # prune-cache is off for this job only, and it is a real failure that was measured

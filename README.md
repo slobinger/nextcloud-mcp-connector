@@ -2,6 +2,13 @@
 
 # MCP Connector for Nextcloud
 
+[![CI](https://github.com/street1983nk/nextcloud-mcp-connector/actions/workflows/ci.yml/badge.svg)](https://github.com/street1983nk/nextcloud-mcp-connector/actions/workflows/ci.yml)
+[![Security scans](https://github.com/street1983nk/nextcloud-mcp-connector/actions/workflows/security.yml/badge.svg)](https://github.com/street1983nk/nextcloud-mcp-connector/actions/workflows/security.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/street1983nk/nextcloud-mcp-connector/badge)](https://scorecard.dev/viewer/?uri=github.com/street1983nk/nextcloud-mcp-connector)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15326/badge)](https://www.bestpractices.dev/projects/15326)
+[![Nextcloud App Store](https://img.shields.io/badge/App_Store-mcp__connector-0082c9)](https://apps.nextcloud.com/apps/mcp_connector)
+[![Licence](https://img.shields.io/badge/Licence-AGPL--3.0--or--later-blue)](LICENSE)
+
 A curated MCP server that connects your Nextcloud (files, calendar, notes, Deck, contacts,
 Tables, Talk and Mail) to AI assistants such as Claude, Cursor, ChatGPT or your own agents.
 Installed as a Nextcloud ExApp, it is its own OAuth 2.1 authorization server as well.
@@ -130,6 +137,15 @@ Check the setup with `php occ mcp_connector:exclusion:check --admin=<uid>`.
 Most important limit: a tag above the root of a share does not protect the shared folder for the recipient, so tag the folder you share.
 Setup, all limits and the findings they rest on: [docs/exclusion.md](docs/exclusion.md).
 
+## Architecture
+
+One container, one app: the connector is a Nextcloud ExApp built on FastAPI
+and the official MCP SDK, serving Streamable HTTP and stdio from the same
+server, and it is its own OAuth 2.1 authorization server bridging into the
+Nextcloud login. Every tool call is an HTTP request against Nextcloud's own
+APIs (WebDAV, CalDAV, CardDAV, OCS and app REST APIs) made as the signed-in
+user, so permissions apply unchanged, and nothing is indexed or copied.
+
 ## Security
 
 This server holds **private data**, it takes in **untrusted content** (a mail or a Talk message
@@ -140,8 +156,11 @@ language model does not reliably separate data from instructions. So `talk_send`
 the administration switch `NC_MCP_TALK_SEND`, which closes the outgoing channel for the whole
 instance while reading stays untouched, and Mail adds reach with deliberately no way out of its
 own. Neither makes prompt injection impossible. The long form, with every countermeasure and
-the honest remainder, is in [docs/privacy.md](docs/privacy.md). The switches sit under
-Settings, Administration, Security:
+the honest remainder, is in [docs/privacy.md](docs/privacy.md). Every boundary this server
+offers on one page, in the order to apply them on confidential data:
+[docs/hardening.md](docs/hardening.md). The systematic version, assets, attackers and every
+threat with the test that holds its mitigation: [docs/threat-model.md](docs/threat-model.md).
+The switches sit under Settings, Administration, Security:
 
 ![Admin settings of the MCP Connector](docs/screenshots/admin-settings.png)
 
@@ -188,7 +207,7 @@ clients too, with one OAuth connection per person: [docs/n8n-setup.md](docs/n8n-
 When `NC_MCP_FILES_ROOT` is set, `/` becomes that directory for the file tools. For example,
 `/scan.pdf` is resolved under `/Documents/AI`, and no file tool can reach its parent folders.
 
-![Connections page with two connected assistants](docs/screenshots/connections-page.png)
+![Connections page with two connected assistants](docs/screenshots/connections-page-v2.png)
 
 ## Privacy
 

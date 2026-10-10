@@ -4,6 +4,13 @@
 
 # MCP Connector pour Nextcloud
 
+[![CI](https://github.com/street1983nk/nextcloud-mcp-connector/actions/workflows/ci.yml/badge.svg)](https://github.com/street1983nk/nextcloud-mcp-connector/actions/workflows/ci.yml)
+[![Security scans](https://github.com/street1983nk/nextcloud-mcp-connector/actions/workflows/security.yml/badge.svg)](https://github.com/street1983nk/nextcloud-mcp-connector/actions/workflows/security.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/street1983nk/nextcloud-mcp-connector/badge)](https://scorecard.dev/viewer/?uri=github.com/street1983nk/nextcloud-mcp-connector)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15326/badge)](https://www.bestpractices.dev/projects/15326)
+[![Nextcloud App Store](https://img.shields.io/badge/App_Store-mcp__connector-0082c9)](https://apps.nextcloud.com/apps/mcp_connector)
+[![Licence](https://img.shields.io/badge/Licence-AGPL--3.0--or--later-blue)](LICENSE)
+
 Un serveur MCP soigneusement sélectionné qui relie votre Nextcloud (fichiers, agenda, notes,
 Deck, contacts, Tables, Talk et Mail) à des assistants IA tels que Claude, Cursor, ChatGPT ou
 vos propres agents. Installé comme ExApp Nextcloud, il est en même temps son propre serveur
@@ -110,6 +117,16 @@ Vérifier avec `php occ mcp_connector:exclusion:check --admin=<uid>`.
 Limite principale : une étiquette au-dessus de la racine d'un partage ne protège pas le dossier partagé chez le destinataire, étiquetez donc le dossier que vous partagez.
 Mise en place, toutes les limites et leurs constats : [docs/exclusion.fr.md](docs/exclusion.fr.md).
 
+## Architecture
+
+Un conteneur, une application : le connecteur est une ExApp Nextcloud bâtie
+sur FastAPI et le SDK MCP officiel, Streamable HTTP et stdio depuis le même
+serveur, et il est son propre serveur d'autorisation OAuth 2.1 avec un pont
+vers la connexion Nextcloud. Chaque appel d'outil est une requête HTTP vers
+les APIs propres de Nextcloud (WebDAV, CalDAV, CardDAV, OCS et les APIs REST
+des applications) au nom de l'utilisateur connecté ; les droits s'appliquent
+inchangés, rien n'est indexé ni copié.
+
 ## Sécurité
 
 Ce serveur détient des **données privées**, il absorbe du **contenu non fiable** (un courriel
@@ -122,8 +139,12 @@ se trouve derrière l'interrupteur d'administration `NC_MCP_TALK_SEND`, qui ferm
 pour toute l'instance tandis que la lecture reste intacte, et Mail ajoute de la portée sans
 sortie propre, délibérément. Aucune des deux ne rend l'injection de prompt impossible. La
 version longue, avec chaque contre-mesure et le reste honnête, se trouve dans
-[docs/privacy.md](docs/privacy.md). Les interrupteurs se trouvent sous Paramètres,
-Administration, Sécurité :
+[docs/privacy.md](docs/privacy.md). Chaque limite de ce serveur sur une seule page, dans
+l'ordre à appliquer sur des données confidentielles :
+[docs/hardening.fr.md](docs/hardening.fr.md). La version systématique, actifs, attaquants et
+chaque menace avec le test qui tient sa contre-mesure :
+[docs/threat-model.md](docs/threat-model.md) (en anglais). Les interrupteurs se trouvent sous
+Paramètres, Administration, Sécurité :
 
 ![Paramètres d'administration du MCP Connector](docs/screenshots/admin-settings.png)
 
@@ -168,7 +189,7 @@ d'environnement et les trois erreurs qui surviennent vraiment :
 [docs/oauth-setup.md](docs/oauth-setup.md). Les plateformes d'automatisation sont aussi des
 clients, avec une connexion OAuth par personne : [docs/n8n-setup.md](docs/n8n-setup.md).
 
-![Page des connexions avec deux assistants connectés](docs/screenshots/connections-page.png)
+![Page des connexions avec deux assistants connectés](docs/screenshots/connections-page-v2.png)
 
 ## Confidentialité
 

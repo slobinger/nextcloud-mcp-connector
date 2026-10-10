@@ -11,12 +11,60 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- SECURITY.md with the two private reporting channels, CONTRIBUTING.md, issue
+  and pull request templates, and THIRD-PARTY.md with the licences of the
+  shipped dependencies.
+- CI security scans: CodeQL over the source and pip-audit over the locked
+  dependency set, weekly on top of every push.
+- Dependabot for the three dependency surfaces (actions, docker, uv).
+- docs/hardening.md (with German and French editions): every boundary this
+  server offers on one page, in the order to apply them on confidential
+  data, closing with a break-in drill to run before production.
+- A weekly OpenSSF Scorecard run that publishes its result; the README
+  carries the badge.
+- docs/threat-model.md: assets, trust boundaries, attackers, every threat
+  with the contract test or switch that holds its mitigation, and the
+  residual risks in plain sentences.
+- An injection corpus in the test suite: one poisoned value per content
+  family (a file name, a calendar summary, a mail subject and preview, a
+  chat message), each held to arrive character for character as data in
+  its content field and to leak into no other field of the answer.
+- Every GitHub release from 0.3.1 on carries a `.sig` asset beside the
+  tarball it signs: the same sha512 signature the store receives,
+  verifiable against the published app certificate.
+
+### Changed
+
+- The base image of both Dockerfile stages is pinned by its multi-arch
+  digest instead of the moving `3.13-slim` tag; dependabot's docker pass
+  moves the digest deliberately.
+- `main` is protected against force pushes and deletion by a repository
+  ruleset.
+- Every workflow action is pinned to a commit SHA instead of a tag.
+- `info.xml` declares the licence as `AGPL-3.0-or-later`, the same spelling
+  as `pyproject.toml` and the repository licence file.
+- Dependency lift after a pip-audit pass: httpx2 2.13.1 (PYSEC-2026-3846,
+  -3848, -3849) and PyJWT 2.15.1 (PYSEC-2026-4141, -4183).
+
+## [0.5.1] - 2026-10-08
+
 ### Changed
 
 - The tool schemas no longer carry the `title` keys pydantic derives from every parameter
   name. They spelled each name a second time ("upload_id" carried `"title": "Upload Id"`),
   so no client loses information, and `tools/list` shrinks from 17763 to 15440 bytes, paid
   by every client in every session.
+
+### Fixed
+
+- The App Store shows the current screenshots again. The store mirror keeps the first
+  version it ever fetched of a URL and never refetches, so the overview image of the
+  first submission was served forever, and browsers that saw the mirror outage of
+  early October cached empty bodies until 2038. Both files were renamed
+  (`connections-v2.png`, `connections-page-v2.png`) and the manifest points there,
+  which gives the mirror fresh entries and every browser an uncached URL.
 
 ## [0.5.0] - 2026-10-05
 
@@ -914,7 +962,8 @@ First release, submitted to the Nextcloud App Store.
   never sees more than that user sees in the web interface.
 - A privacy and data flow description, see [docs/privacy.md](docs/privacy.md).
 
-[Unreleased]: https://github.com/street1983nk/nextcloud-mcp-connector/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/street1983nk/nextcloud-mcp-connector/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/street1983nk/nextcloud-mcp-connector/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/street1983nk/nextcloud-mcp-connector/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/street1983nk/nextcloud-mcp-connector/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/street1983nk/nextcloud-mcp-connector/compare/v0.3.1...v0.3.2
